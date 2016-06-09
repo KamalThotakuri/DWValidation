@@ -100,7 +100,7 @@ public class ValidatorMapper extends Mapper<LongWritable, Text, Text, Text >{
 	}
 
 
-	public static synchronized Properties loadProperties(String propsFile, FileSystem fs) {
+	public static  Properties loadProperties(String propsFile, FileSystem fs) {
 		try {
 			if (properties == null) {
 				properties = new Properties();
