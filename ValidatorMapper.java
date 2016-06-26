@@ -1,124 +1,145 @@
-package com.acxiom.ppm.incrementaldataloadvalidation;
+package com.acxiom.pmp.mr.dataloadvalidation;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.acxiom.pmp.constants.DWConfigConstants;
 //Comment added 
-public class ValidatorMapper extends Mapper<LongWritable, Text, Text, Text >{
-	private String sourceHeaderFile ;
-	private String targetHeaderFile ;
-	private String targetHiveTableName;
-	private static final Map<String, String> headerLocationWithTableNames = new HashMap<String, String>();
+public class ValidatorMapper extends Mapper<LongWritable, Text, Text, Text > implements DWConfigConstants{
+	private String date;
+	private String tableName;
+	private Text keyOut = new Text();
+	private Text valueOut = new Text();
+	private String targetHiveTable; 
+	private int primaryKeyIndex=0;
+	private boolean isCompositeKey = false;
+	private String compositeKey;
+	//Has to remove the below variables and make them local
+	private String inputFilePath;
+	private String inputFileName;
+	private String sourceDataLocation;
+	private String lstName;
+	private static Logger log = LoggerFactory.getLogger(ValidatorMapper.class);
 
-	Properties targetDWConfiguration=null;
-	Properties sourceDWConfiguration=null;
-	static Properties properties=null;
-	String currentTablename=null;
-
-	Text KeyOut = new Text();
-	Text ValueOut = new Text();
 	@Override
 	protected void setup(Context context){
-
 		Configuration conf = context.getConfiguration();
-
-		sourceHeaderFile = conf.get("sourcetable.header.configurationfile.path");
-		targetHeaderFile = conf.get("targettable.header.configurationfile.path");
-
-		targetDWConfiguration = new Properties();
-		sourceDWConfiguration = new Properties();		
-		FileSystem fs;
 		try {
-			fs = FileSystem.get(conf);
-
-
-			if (sourceHeaderFile != null) {			
-				sourceDWConfiguration = ValidatorMapper.loadProperties(sourceHeaderFile, fs);
-				for (Map.Entry<Object, Object> e : sourceDWConfiguration.entrySet()) {
-					String key = (String) e.getKey();
-					String value = (String) e.getValue();				  
-					headerLocationWithTableNames.put(key, value);					 
-				}
+			inputFilePath = ((FileSplit) context.getInputSplit()).getPath().toString();
+			inputFileName = ((FileSplit) context.getInputSplit()).getPath().getName();	
+			sourceDataLocation = conf.get(DWVALIDATION_SOURCE_TABLES_DATA_LOCATON);
+			targetHiveTable = conf.get(DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE);
+			//$(Prefix)_1TIME_DATA_YYYYMMDD.tsv
+			//SBKTO::
+			//InputFile Path:maprfs:///mapr/thor/amexprod/STAGING/tempdelete/srcTableDir/Data/20160531/BIN/SBKTO_1TIME_DATA_20160531.tsv 
+			//InputFileName:SBKTO_1TIME_DATA_20160531.tsv 
+			//sourceDataLocation:/mapr/thor/amexprod/STAGING/tempdelete/srcTableDir/::
+			if(inputFilePath.contains(sourceDataLocation)){
+				String[] nameHolder = inputFileName.split(UNDERSCORE);
+				tableName = nameHolder[0];
+				int index = nameHolder.length-1;
+				lstName = nameHolder[index];
+				//lastName:20160531.tsv
+				String[] dateHolder = lstName.split(DOT);
+				date = dateHolder[0];
+			}else{
+				tableName = targetHiveTable;
 			}
 
-			if (targetHeaderFile != null) {			
-				targetDWConfiguration = ValidatorMapper.loadProperties(targetHeaderFile, fs);
-				for (Map.Entry<Object, Object> e : targetDWConfiguration.entrySet()) {
-					targetHiveTableName = (String) e.getKey();
-					String key = (String) e.getKey();
-					String value = (String) e.getValue();				  
-					headerLocationWithTableNames.put(key, value);					 
-				}
-			}		
-
-			String inputSplitfileName = ((FileSplit) context.getInputSplit()).getPath().getName();		
-
-			for (String key : headerLocationWithTableNames.keySet()) {
-				if(key.contains(inputSplitfileName)){
-					currentTablename = key;
-				}
-			}
-		} catch (IOException e1) {
-			// TODO Auto-generated catch block
+		} catch (Exception e1) {
 			e1.printStackTrace();
 		}  
+	}
 
+	class DataRecord {
+		String primaryKey;
+		String colsWithoutPKey;
 
+		public DataRecord(String primaryKey, String colsWithoutPKey) {
+			this.primaryKey = primaryKey;
+			this.colsWithoutPKey = colsWithoutPKey;
+		}
+
+		public String getPrimaryKey() {
+			return primaryKey;
+		}
+
+		public String getColsWithoutPKey() {
+			return colsWithoutPKey;
+		}
+	}
+
+	private DataRecord handlePrimarKey(Text value) {
+
+		String[] columns = value.toString().split(TAB,-2);
+		String primaryKey = columns[primaryKeyIndex];
+
+		StringBuilder result = new StringBuilder();
+		for(int colIdx=0; colIdx<columns.length; colIdx++) {
+
+			/*if(colIdx == primaryKeyIndex) {
+				continue;
+			}*/
+			result.append(columns[colIdx].trim()+TAB);
+		}
+		if(result.length() > 0) {
+			result.setLength(result.length()-1);
+		}
+		return new DataRecord(primaryKey, result.toString());
+		//return new DataRecord(primaryKey, value.toString());
+		
 	}
 
 	@Override
-	public void map(LongWritable key, Text Value, Context context) throws IOException, InterruptedException{
-
-		String Line1 = Value.toString();
-
-
-		StringBuilder sb = new StringBuilder();
-		String[] keyVeluHolder = Value.toString().split("\\t",2);
-
-		sb.append(currentTablename);
-		sb.append(":");
-		sb.append(keyVeluHolder[2]);
-
-		KeyOut.set(keyVeluHolder[1]);
-		ValueOut.set(sb.toString());
-		context.write( KeyOut, ValueOut );
-
-	}
-
-
-	public static  Properties loadProperties(String propsFile, FileSystem fs) {
-		try {
-			if (properties == null) {
-				properties = new Properties();
-				Path inFile = new Path(propsFile);
-				FSDataInputStream fis = fs.open(inFile);
-
-				//FileInputStream fis = new FileInputStream(propsFile);
-				properties.load(fis);
-			}
-		} catch (IOException e) {
-			String msg = "Error reading the properties file "+propsFile+" make sure the properties file exists "
-					+ "with proper permissions and try again";
-			e.printStackTrace();
-			//log.error(msg);
-			//throw new Exception(msg, e);
+	public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException{
+		//TempDelete
+		String[] columnValues = value.toString().split(TAB,-2);
+		
+		DataRecord record = null;
+		if(isCompositeKey) {
+			record = handleCompositeKey(value);
+		} else {
+			record = handlePrimarKey(value);
 		}
-		return properties;
+		// 
+		StringBuilder sb = new StringBuilder();
+		sb.append(tableName);
+		sb.append(COLON);
+
+		if (!tableName.equals(targetHiveTable)){
+			//This line has to keep
+			sb.append(date);
+
+			//sb.append(" Date:" + date + "targetHiveTable :" + targetHiveTable);
+		}else{
+			sb.append("yyyymmdd");
+		}
+		sb.append(COLON);		
+		sb.append(inputFilePath);
+		sb.append(COLON);
+		sb.append(columnValues.length);
+		sb.append(COLON);
+		//sb.append(value.toString());
+		sb.append(record.getColsWithoutPKey());
+		
+		// bin is 1st column
+		keyOut.set(record.getPrimaryKey());
+		valueOut.set(sb.toString());
+		log.info("Primary Key:" + record.getPrimaryKey());
+		System.out.println("Primary Key:" + record.getPrimaryKey());
+		context.write(keyOut, valueOut);
+
+
 	}
 
+	private DataRecord handleCompositeKey(Text value) {
+		return null;
+	}
 }
-

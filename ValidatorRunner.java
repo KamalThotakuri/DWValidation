@@ -1,95 +1,108 @@
-package com.acxiom.ppm.incrementaldataloadvalidation;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileReader;
-import java.io.IOException;
+package com.acxiom.pmp.mr.dataloadvalidation;
+import java.util.Map;
 import java.util.Properties;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-//Comment added 
-public class ValidatorRunner {
+import com.acxiom.pmp.common.DWConfiguration;
+import com.acxiom.pmp.common.DWUtil;
+import com.acxiom.pmp.constants.DWConfigConstants;
+public class ValidatorRunner extends Configured implements Tool,DWConfigConstants{
+	private static Logger log = LoggerFactory.getLogger(ValidatorRunner.class);
 
-	public static void main(String[] args)   {
-		// TODO Auto-generated method stub
+	@Override
+	public int run(String[] args) throws Exception {
+		DWConfiguration.loadProps("config/dwconfig.properties");
+		Properties prop =  DWConfiguration.getProps();
+		String sourceInputDataSet = DWUtil.parseSoruceTableInput(prop.getProperty(DWVALIDATION_START_DATAE), 
+				prop.getProperty(DWVALIDATION_END_DATAE), 
+				prop.getProperty(DWVALIDATION_COMPRESSION_LEVEL),
+				prop.getProperty(DWVALIDATION_SOURCE_TABLES_REQUIRED_TOCOMPARE),
+				prop.getProperty(DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE),
+				prop.getProperty(DWVALIDATION_SOURCE_TABLES_DATA_LOCATON));
 
-		Properties driverConfiguration =null;		
-
-		for(String arg: args) {
-			System.out.println(arg);
+		//String dwTableInputDataSet = prop.getProperty(DWVALIDATION_TARGET_DW_TABLE_DATA_LOCATON) + FSEP + "Data" + FSEP +
+		prop.getProperty(DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE);
+		//For Venkat Data
+		String dwTableInputDataSet = "/mapr/thor/amexprod/STAGING/1dataload/1TIME/Data/20160531/BIN/joinFiles/";
+		Configuration conf= new Configuration();
+		conf.set(DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE, prop.getProperty(DWConfigConstants.DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE));
+		conf.set(DWVALIDATION_COMPRESSION_LEVEL, prop.getProperty(DWConfigConstants.DWVALIDATION_COMPRESSION_LEVEL));
+		conf.set(DWVALIDATION_SOURCE_TABLES_DATA_LOCATON, prop.getProperty(DWConfigConstants.DWVALIDATION_SOURCE_TABLES_DATA_LOCATON));
+		conf.set(DWVALIDATION_TARGET_DW_TABLE_DATA_LOCATON, prop.getProperty(DWConfigConstants.DWVALIDATION_TARGET_DW_TABLE_DATA_LOCATON));	
+		String csTargetHeader = DWUtil.getTargetHeaderColumns(prop.getProperty(DWVALIDATION_TARGET_DW_TABLE_DATA_LOCATON) ,prop.getProperty(DWVALIDATION_TARGET_HIVE_TABLE_TOCOMPARE));
+		conf.set(DWVALIDATION_TARGET_HEADER, csTargetHeader);
+		Properties headerFileProps = DWUtil.getSourceHeaderFiles(sourceInputDataSet);
+		String headerFilesStr = DWUtil.getSourceHeaderColumns(headerFileProps);
+		conf.set(DWVALIDATION_SOURCE_HEADERS, headerFilesStr);
+		if(prop.getProperty(DWConfigConstants.DWVALIDATION_COMPRESSION_LEVEL)==COMPARISION_TYPE){
+			String srcTablesCompList = DWUtil.getFullSrcTablesList(headerFileProps);
+			conf.set(DWVALIDATION_SOURCE_TABLES_REQUIRED_TOCOMPARE, srcTablesCompList);
+		}else{
+			conf.set(DWVALIDATION_SOURCE_TABLES_REQUIRED_TOCOMPARE, prop.getProperty(DWConfigConstants.DWVALIDATION_SOURCE_TABLES_REQUIRED_TOCOMPARE));
 		}
+		conf.set(DWVALIDATION_ROW_KEY,prop.getProperty(DWVALIDATION_ROW_KEY));
+		conf.set("mapreduce.job.reduces", "7");
+		Map<String, Map<String, String>> map1 = DWUtil.getHeadersAsMap(headerFilesStr);
+		for(Map.Entry<String, Map<String, String>> elements:map1.entrySet() ){
+			
+			 System.out.println(elements.getKey());
+			  Map<String, String> map2 = elements.getValue();
+			  for(Map.Entry<String, String>datecoulmns:map2.entrySet() ){
+				  System.out.println("Date:" + datecoulmns.getKey());
+				  System.out.println("Columns:" + datecoulmns.getValue());
+			  }
+		}
+		// 
+		Job job = new Job(conf, "DWValidation");
 
-		System.out.println("Starting");
-		String[] CoulnmNames = null ;
-		String Headerkeys = null ;
+		job.setJarByClass(ValidatorRunner.class);
+		job.setMapperClass(ValidatorMapper.class);
+		job.setReducerClass(ValidatorReducer.class);		
+		job.setMapOutputKeyClass(Text.class);
+		job.setMapOutputValueClass(Text.class);			
+		job.setOutputKeyClass(Text.class);	
+		job.setOutputValueClass(NullWritable.class);
+		//job.setNumReduceTasks(0);
+		// inputs
+		job.setInputFormatClass(TextInputFormat.class);
+		String inputDataSet = sourceInputDataSet + COMMA + dwTableInputDataSet;
+		log.info("Input Path:"+inputDataSet);
+		FileInputFormat.setInputPaths(job, inputDataSet);
 
-		try {
+		// output
+		job.setOutputFormatClass(TextOutputFormat.class);
+		Path outputPath = new Path(prop.getProperty(DWVALIDATION_RESULT_LOCATION));
+		FileSystem fs = FileSystem.get(conf);
+		if(fs.exists(outputPath)) {
+			outputPath.getFileSystem(conf).delete(outputPath,true);
+		}
+		FileOutputFormat.setOutputPath(job, outputPath);
 
-			if(args.length != 1)
-			{
-				System.out.println("Proper Usage is: java program filename");
-				System.exit(0);
-			}
-			Configuration conf= new Configuration();
-
-			File DriverConfigfile = new File(args[0]);
-			FileInputStream fileInput = new FileInputStream(DriverConfigfile);
-			driverConfiguration = new Properties();
-			driverConfiguration.load(fileInput);
-			fileInput.close();
-
-			String soruceDWTablesDirLocation = driverConfiguration.getProperty("sourcetable.data.location");
-			String TargetDWTablesDirLocation = driverConfiguration.getProperty("sourcetable.data.location");			
-			String soruceDWTablesHeaderConFile = driverConfiguration.getProperty("sourcetable.header.configurationfile.path");
-			String TargetDWTablesHeaderConFile = driverConfiguration.getProperty("targettable.header.configurationfile.path");
-
-
-			conf.set("sourcetable.header.configurationfile.path", soruceDWTablesDirLocation);
-			conf.set("targettable.header.configurationfile.path", TargetDWTablesDirLocation);		
-
-			Job job = new Job(conf, "DWValidation");
-
-			job.setJarByClass(ValidatorRunner.class);
-			job.setMapperClass(ValidatorMapper.class);
-			job.setReducerClass(ValidatorReducer.class);		
-
-			job.setInputFormatClass(TextInputFormat.class);
-			job.setOutputFormatClass(TextOutputFormat.class);
-
-			job.setMapOutputKeyClass(Text.class);
-			job.setMapOutputValueClass(Text.class);			
-			job.setOutputKeyClass(Text.class);	
-			job.setOutputValueClass(Text.class);
-
-
-			FileInputFormat.setInputPaths(job, new Path(soruceDWTablesDirLocation), new Path(TargetDWTablesDirLocation));
-			Path outputPath = new Path(args[1]);
-			outputPath.getFileSystem(conf).delete(outputPath);
-			FileOutputFormat.setOutputPath(job, outputPath);
-
-			System.out.println("submitting");
-			boolean b = job.waitForCompletion(true);
-			System.out.println("b is "+b);
-
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (ClassNotFoundException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}	
+		log.info("Submitting the job");
+		boolean b = job.waitForCompletion(true);
+		System.out.println("b is "+b);
+		return 0;
 	}
 
+	public static void main(String[] args) throws Exception {
+		Configuration conf = new Configuration();
+		ValidatorRunner vr = new ValidatorRunner();
+		int res = ToolRunner.run(conf, vr, args);
+		System.exit(res);       
+	}
 }
