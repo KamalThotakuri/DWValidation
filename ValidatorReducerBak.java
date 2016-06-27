@@ -11,13 +11,12 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.acxiom.pmp.common.DWException;
 import com.acxiom.pmp.common.DWUtil;
 import com.acxiom.pmp.constants.DWConfigConstants;
 
-public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> implements DWConfigConstants {
+public class ValidatorReducerBak extends Reducer< Text, Text, Text, NullWritable> implements DWConfigConstants {
 	private Map<String, Map<String, String>> map = new HashMap<String, Map<String, String>>();
-	private static Logger log = LoggerFactory.getLogger(ValidatorReducer.class);
+	private static Logger log = LoggerFactory.getLogger(ValidatorReducerBak.class);
 
 	private Text keyOut = new Text();
 	private Text valueOut = new Text();
@@ -43,30 +42,23 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 		Map<String, String> targetHiveTableMap = new HashMap<String, String>();
 		Map<String, String> soruceTableMap = new HashMap<String, String>();
 		Map<String, Boolean> targetHiveTableFlagMap = new HashMap<String, Boolean>();
-		//String tableName=null;
+		String tableName=null;
 		String matchedColsHolder=null;
 		String differedColssHolder=null;
 		String existsOnlyinSource=null;
 		String existsOnlyinTarget=null;
-		//String notUpdateDtoNullCols=null;
-		String upDatedtoNullCols=null;
 		String result=null;
 		StringBuilder onlySourceCols = new StringBuilder();
 		StringBuilder onlyTargetCols = new StringBuilder();
 		StringBuilder matchedCols = new StringBuilder();
-		StringBuilder differedCols = new StringBuilder();		
-		StringBuilder notUpdatetoNull = new StringBuilder();
-		StringBuilder updatetoNull = new StringBuilder();
-		//String date = "";
+		StringBuilder differedCols = new StringBuilder();
+		String date = "";
 
 
 		//tempdelete
 		StringBuilder soruceMap = new StringBuilder();
 		StringBuilder targetMap = new StringBuilder();
-		StringBuilder fileNameHolders = new StringBuilder();
-	/*	String record;
-		String mapperSplitValue;
-		String inFileName;*/
+		String record=null;
 
 		System.out.println("Reducer Starts");
 		log.info("reducer messaged from log4j");
@@ -74,54 +66,28 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 		boolean targetTableExist=false;
 		for(Text tableDateData : values){
 
-			String[] tableDateDataArr = tableDateData.toString().split(COLON,5);
-			String tableName = tableDateDataArr[0];
-			String date = tableDateDataArr[1];
-			String inFileName = tableDateDataArr[2];
-			String mapperSplitValue = tableDateDataArr[3];
-			String record = tableDateDataArr[4];
-			fileNameHolders.append(inFileName);
-			fileNameHolders.append(";");
-			//tempDelete
-			StringBuilder ss = new StringBuilder();
+			String[] tableDateDataArr = tableDateData.toString().split(COLON,3);
+			tableName = tableDateDataArr[0];
+			date = tableDateDataArr[1];
+			record = tableDateDataArr[2];
 			if(!tableName.equals(targetHiveTable)){
 				Map<String, String> dateHeader = map.get(tableName);
 				String header = dateHeader.get(date);
+				log.info("datevalue: "+date);	
+				System.out.println("datevalue: "+date);
 				String[] cols = header.split(COMMA);
-				String[] colValues = record.split(TAB,-2);
-				try{
-					for(int i = 0; i < cols.length; i++) {
-						soruceTableMap.put(cols[i], colValues[i]);
-						ss.append(colValues[i]);
-						ss.append(";");
-					}
-				}catch(Exception e){
-					//e.printStackTrace();
-					throw new DWException("Count Didn't Match TableName: " + tableName + " HeaderCOunt:"+ cols.length + " RecordCunt:" +colValues.length + 
-							//" HeaderCols:" +header +
-							" MapperSplitValue:" + mapperSplitValue +
-							" InputFileName:" + inFileName +
-							" Record:" + record +
-							" SplittedRecord:"+ss.toString(), e);
-					//throw new DWException("Kamal", e);
+				String[] colValues = record.split(TAB);
+				for(int i = 0; i < cols.length; i++) {
+					soruceTableMap.put(cols[i], colValues[i]);
 				}
 			}else {
 				/// Loading of Target HashMap
 				targetTableExist=true;
 				String[] cols = csTargetHeader.split(COMMA);
-				String[] colValues = record.split(TAB,-2);
-				try{
-					for(int i = 0; i < cols.length; i++) {
-						targetHiveTableMap.put(cols[i], colValues[i]);
-						targetHiveTableFlagMap.put(cols[i], false);
-					}
-				}catch(Exception e){
-					//e.printStackTrace();
-					throw new DWException("Count Didn't Match TableName: " + tableName + " HeaderCOunt:"+ cols.length + " RecordCunt:" +colValues.length + 
-							" Record:" + record +							
-							" MapperSplitValue:" + mapperSplitValue +
-							" InputFileName:" + inFileName, e);
-					//throw new DWException("Kamalkumar", e);
+				String[] colValues = record.split(TAB);
+				for(int i = 0; i < cols.length; i++) {
+					targetHiveTableMap.put(cols[i], colValues[i]);
+					targetHiveTableFlagMap.put(cols[i], false);
 				}
 			}
 			itrDepth ++;
@@ -132,55 +98,37 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 				for (String colName : soruceTableMap.keySet()) {
 					String targetColValue = targetHiveTableMap.get(colName);
 					String sourceColValue = soruceTableMap.get(colName);
-					soruceMap.append(colName);
-					soruceMap.append(":");
-					soruceMap.append(sourceColValue);
-					targetMap.append(colName);
-					targetMap.append(":");
-					targetMap.append(targetColValue);
-					
-					if(targetColValue !=null){
 
-
-						if(sourceColValue.equals(targetColValue)){
-							matchedCols.append(colName);
-							matchedCols.append(SEMICOLON);
-							targetHiveTableFlagMap.put(colName, true);
-						}else{
-							differedCols.append(OPBRACKET);
-							differedCols.append(colName);
-							differedCols.append(COLON);
-							differedCols.append(sourceColValue);
-							differedCols.append(COMMA);
-							differedCols.append(targetColValue);
-							differedCols.append(CLBRACKET);
-							differedCols.append(SEMICOLON);
-							targetHiveTableFlagMap.put(colName, true);
-						}
-
-					}else{
+					if(targetColValue == null){
 						onlySourceCols.append(colName);
-						onlySourceCols.append(SEMICOLON);
+						onlySourceCols.append(";");
+					}if(targetColValue.equals(sourceColValue)){
+						matchedCols.append(colName);
+						matchedCols.append(";");						
+						targetHiveTableFlagMap.put(colName, true);
+					}if(!(targetColValue.equals(sourceColValue))){
+						differedCols.append("[");
+						differedCols.append(colName);
+						differedCols.append(":");
+						differedCols.append(sourceColValue);
+						differedCols.append(",");
+						differedCols.append(targetColValue);
+						differedCols.append(";");
+						targetHiveTableFlagMap.put(colName, true);
 					}
 				}
 				for(String colName: targetHiveTableFlagMap.keySet()){
 
 					if(srcRequiredTable.contains(colName)){
 						if(!(targetHiveTableFlagMap.get(colName))){
-							if(targetHiveTableMap.get(colName)=="null"){
-								updatetoNull.append(colName);
-								updatetoNull.append(SEMICOLON);
-							}else{
-								onlyTargetCols.append(colName);
-								onlyTargetCols.append(SEMICOLON);
-							}
-
+							onlyTargetCols.append(colName);
+							onlyTargetCols.append(";");
 						}
 					}
 				}
 				if(matchedCols.length()>0){
 					matchedCols.setLength(matchedCols.length()-1);
-					matchedColsHolder = "MatchedColumns "+ FOPBRACKET + matchedCols.toString()  +FCLBRACKET;
+					matchedColsHolder = "MatchedColumns "+ FOPBRACKET + matchedCols.toString() + FCLBRACKET;
 				}else{
 					matchedColsHolder = "MatchedColumns "+ FOPBRACKET + matchedCols.toString() + FCLBRACKET;
 				}
@@ -196,37 +144,20 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 				}else{
 					existsOnlyinSource= "ColumnsExistOnlyInSource "+ FOPBRACKET  + onlySourceCols.toString() + FCLBRACKET;
 				}
+
 				if(onlyTargetCols.length()>0){
 					onlySourceCols.setLength(onlySourceCols.length()-1);
 					existsOnlyinTarget= "ColumnsExistOnlyInHive "+ FOPBRACKET  + onlyTargetCols.toString() + FCLBRACKET;
 				}else{
 					existsOnlyinTarget= "ColumnsExistOnlyInHive "+ FOPBRACKET  + onlyTargetCols.toString() + FCLBRACKET;
 				}
-				if(updatetoNull.length()>0){
-					updatetoNull.setLength(updatetoNull.length()-1);
-					upDatedtoNullCols= "ColumnsExistOnlyInHive "+ FOPBRACKET  + updatetoNull.toString() + FCLBRACKET;
-				}else{
-					upDatedtoNullCols= "ColumnsExistOnlyInHive "+ FOPBRACKET  + updatetoNull.toString() + FCLBRACKET;
-				}
 
-				
-/*				try{
-					if(notUpdatetoNull.length()>0){
-						notUpdatetoNull.setLength(onlySourceCols.length()-1);
-						notUpdateDtoNullCols= "ColumnsExistOnlyInHive "+ FOPBRACKET  + notUpdatetoNull.toString() + FCLBRACKET;
-					}else{
-						notUpdateDtoNullCols= "ColumnsExistOnlyInHive "+ FOPBRACKET  + notUpdatetoNull.toString() + FCLBRACKET;
-					}
-				}catch(Exception e){
-					e.printStackTrace();
-					throw new DWException("NotUpdatedCols:" + notUpdatetoNull.toString(), e);
-				}*/
 				//context.write(new Text(result), NullWritable.get());
 				//result = soruceMap.toString() + "::" + targetMap.toString(); 
 				//result = key.toString()  ;
 				//result = soruceMap.toString();
 				//result= targetMap.toString(); 
-				result = key.toString() + COLON + matchedColsHolder + PIPE + differedColssHolder + PIPE + existsOnlyinSource + PIPE + existsOnlyinTarget + PIPE +  upDatedtoNullCols + PIPE + " ReduceSideFile:" + fileNameHolders.toString() ;
+				result = key.toString() + COLON + matchedColsHolder + PIPE + differedColssHolder + PIPE + existsOnlyinSource + PIPE + existsOnlyinTarget ;
 				context.write(new Text(result), NullWritable.get());
 
 			}else if (itrDepth >=1 && !targetTableExist){
@@ -236,15 +167,15 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 				}
 				if(onlySourceCols.length()>0){
 					onlySourceCols.setLength(onlySourceCols.length()-1);
-					existsOnlyinSource= "ColumnsExistOnlyInSource "+ FOPBRACKET  + onlySourceCols.toString() + FCLBRACKET;
+					existsOnlyinSource=  FOPBRACKET  + onlySourceCols.toString() + FCLBRACKET;
 				}else{
-					existsOnlyinSource= "ColumnsExistOnlyInSource "+ FOPBRACKET  + onlySourceCols.toString() + FCLBRACKET;
+					existsOnlyinSource=  FOPBRACKET  + onlySourceCols.toString() + FCLBRACKET;
 				}
-				result = key.toString() + COLON  + existsOnlyinSource +PIPE + " ReduceSideFile:" + fileNameHolders.toString(); 
+				result = key.toString() + COLON + "This key exists only in source tables and its columns are " + existsOnlyinSource; 
 				context.write(new Text(result), NullWritable.get());
 
 			}else if (itrDepth==1 && targetTableExist){
-				result = key.toString() + COLON + "<Not in comparision Date range>" +PIPE + " ReduceSideFile:" + fileNameHolders.toString(); 
+				result = key.toString() + COLON + "<Not in comparision Date range>"; 
 				//context.write(new Text(result), NullWritable.get());
 				//result = key.toString() + "::" + record ;
 				//result = key.toString()  ;
@@ -252,12 +183,9 @@ public class ValidatorReducer extends Reducer< Text, Text, Text, NullWritable> i
 			}
 		}catch (IOException | InterruptedException e) {
 			// TODO Auto-generated catch block
-			//e.printStackTrace();
+			e.printStackTrace();
 		}
-
-	}
-
-
+	} 
 
 
 
